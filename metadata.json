@@ -1,0 +1,6 @@
+{
+  "name": "IndusLink ESP32 Telemetry Monitor",
+  "description": "Industrial-grade real-time sensor monitoring dashboard with WPA2-Enterprise handshake authentication, MQTT integration, and satellite GPS tracking.",
+  "requestFramePermissions": ["geolocation", "notifications"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
