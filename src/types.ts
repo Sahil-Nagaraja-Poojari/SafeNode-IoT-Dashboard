@@ -1,3 +1,14 @@
+export interface SafeNodeTelemetry {
+  id: number;
+  device_id: string;
+  gas_raw: number | null;
+  temperature: number | null;
+  humidity: number | null;
+  sos: boolean;
+  latitude: number | null;
+  longitude: number | null;
+  created_at: string;
+}
 export interface TelemetryData {
   timestamp: number;
   heartRate: number; // BPM

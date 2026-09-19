@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+
 import { Header } from './components/Header';
 import { HandshakeModal } from './components/HandshakeModal';
 import { OverviewCards } from './components/OverviewCards';
@@ -8,206 +9,608 @@ import { SerialMonitor } from './components/SerialMonitor';
 import { GasLogTable } from './components/GasLogTable';
 import { ConfigModal } from './components/ConfigModal';
 import { ArduinoIde } from './components/ArduinoIde';
-import { TelemetryData, HandshakeState, DeviceConfig, AlertLog } from './types';
+
+import {
+  TelemetryData,
+  HandshakeState,
+  DeviceConfig,
+  AlertLog,
+} from './types';
+
+import {
+  getLatestTelemetry,
+  getTelemetryHistory,
+} from './safenodeService';
+
 
 export default function App() {
-  const [activeView, setActiveView] = useState<'dashboard' | 'arduino'>('dashboard');
+
+  const [activeView, setActiveView] =
+    useState<'dashboard' | 'arduino'>('dashboard');
+
+
+  // --------------------------------------------------
+  // HANDSHAKE
+  // --------------------------------------------------
 
   const [handshake, setHandshake] = useState<HandshakeState>({
-    verified: false,
-    ssid: "ENTERPRISE-SECURE-INDUS",
-    identity: "esp32-node-77a4@factory.net",
-    eapMethod: "PEAP-MSCHAPv2",
-    macAddress: "24:6F:28:B4:77:A4",
-    ipAddress: "192.168.10.142",
-    rssi: -64,
-    cipher: "WPA2-Enterprise / CCMP (AES)",
-    connectedAt: null,
+    verified: true,
+    ssid: 'SafeNode WiFi',
+    identity: 'safenode-01',
+    eapMethod: 'PEAP-MSCHAPv2',
+    macAddress: 'ESP32',
+    ipAddress: 'Connected',
+    rssi: 0,
+    cipher: 'WiFi',
+    connectedAt: Date.now(),
     handshakeLogs: [
-      "[SYSTEM] ESP32 Gateway initialized. Waiting for WPA2-Enterprise handshake...",
+      '[SYSTEM] SafeNode ESP32 connected.',
+      '[SYSTEM] Supabase telemetry link active.',
     ],
   });
 
+
+  // --------------------------------------------------
+  // CONFIG
+  // --------------------------------------------------
+
   const [config, setConfig] = useState<DeviceConfig>({
-    heartRateThreshold: { high: 110, low: 50 },
-    oxygenThreshold: { low: 92 },
-    tempThreshold: { high: 39.0 },
-    gasThresholds: { co: 30, co2: 1000, methane: 50, voc: 200 },
-    mqttBroker: "mqtt://industrial-broker.local:1883",
-    mqttPort: 1883,
+    heartRateThreshold: {
+      high: 110,
+      low: 50,
+    },
+
+    oxygenThreshold: {
+      low: 92,
+    },
+
+    tempThreshold: {
+      high: 39.0,
+    },
+
+    gasThresholds: {
+      co: 30,
+      co2: 1000,
+      methane: 50,
+      voc: 200,
+    },
+
+    mqttBroker: 'Supabase',
+
+    mqttPort: 443,
+
     pushNotificationsEnabled: true,
   });
 
-  const [telemetry, setTelemetry] = useState<TelemetryData>({
-    timestamp: Date.now(),
-    heartRate: 0,
-    oxygenLevel: 0,
-    temperature: 0.0,
-    gasLevels: { co: 0, co2: 0, methane: 0, voc: 0 },
-    gps: { latitude: 0, longitude: 0, altitude: 0, speed: 0, satellites: 0, fixStatus: "STANDBY" },
-  });
 
-  const [history, setHistory] = useState<TelemetryData[]>([]);
-  const [alerts, setAlerts] = useState<AlertLog[]>([]);
-  const [isHandshakeOpen, setIsHandshakeOpen] = useState(false);
-  const [isConfigOpen, setIsConfigOpen] = useState(false);
-  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  // --------------------------------------------------
+  // TELEMETRY
+  // --------------------------------------------------
 
-  // Poll backend status
-  useEffect(() => {
-    const fetchStatus = async () => {
-      try {
-        const res = await fetch('/api/status');
-        if (res.ok) {
-          const data = await res.json();
-          setHandshake(data.handshake);
-          setConfig(data.config);
-          setTelemetry(data.telemetry);
-          if (data.history) setHistory(data.history);
-          if (data.alerts) setAlerts(data.alerts);
-        }
-      } catch (err) {
-        // Silent fallback during cold start or network transition
-      }
+  const [telemetry, setTelemetry] =
+    useState<TelemetryData>({
+      timestamp: Date.now(),
+
+      heartRate: 0,
+
+      oxygenLevel: 0,
+
+      temperature: 0,
+
+      gasLevels: {
+        co: 0,
+        co2: 0,
+        methane: 0,
+        voc: 0,
+      },
+
+      gps: {
+        latitude: 0,
+        longitude: 0,
+        altitude: 0,
+        speed: 0,
+        satellites: 0,
+        fixStatus: 'STANDBY',
+      },
+    });
+
+
+  const [history, setHistory] =
+    useState<TelemetryData[]>([]);
+
+
+  const [alerts, setAlerts] =
+    useState<AlertLog[]>([]);
+
+
+  const [isHandshakeOpen, setIsHandshakeOpen] =
+    useState(false);
+
+
+  const [isConfigOpen, setIsConfigOpen] =
+    useState(false);
+
+
+  const [notificationsEnabled, setNotificationsEnabled] =
+    useState(true);
+
+
+  // --------------------------------------------------
+  // CONVERT SUPABASE DATA → OLD DASHBOARD FORMAT
+  // --------------------------------------------------
+
+  const convertTelemetry = (data: any): TelemetryData => {
+
+    const latitude =
+      data.latitude ?? 0;
+
+    const longitude =
+      data.longitude ?? 0;
+
+    const temperature =
+      data.temperature ?? 0;
+
+    const gas =
+      data.gas_raw ?? 0;
+
+
+    return {
+
+      timestamp: data.created_at
+        ? new Date(data.created_at).getTime()
+        : Date.now(),
+
+      // MAX30102 is not currently connected
+      heartRate: 0,
+
+      oxygenLevel: 0,
+
+      temperature,
+
+      gasLevels: {
+
+        // MQ-2 is currently an ADC raw value,
+        // not calibrated ppm.
+        co: gas,
+
+        co2: 0,
+
+        methane: 0,
+
+        voc: 0,
+      },
+
+      gps: {
+
+        latitude,
+
+        longitude,
+
+        altitude: 0,
+
+        speed: 0,
+
+        satellites:
+          latitude !== 0 && longitude !== 0
+            ? 1
+            : 0,
+
+        fixStatus:
+          latitude !== 0 && longitude !== 0
+            ? '3D FIX'
+            : 'STANDBY',
+      },
     };
+  };
 
-    fetchStatus();
-    const interval = setInterval(fetchStatus, 1500);
-    return () => clearInterval(interval);
+
+  // --------------------------------------------------
+  // LOAD DATA FROM SUPABASE
+  // --------------------------------------------------
+
+  const loadTelemetry = async () => {
+
+    try {
+
+      const latest =
+        await getLatestTelemetry();
+
+
+      if (latest) {
+
+        const converted =
+          convertTelemetry(latest);
+
+        setTelemetry(converted);
+
+
+        // Create SOS alert when button is pressed
+        if (latest.sos) {
+
+          const sosAlert: AlertLog = {
+
+            id: String(latest.id),
+
+            timestamp:
+              new Date(latest.created_at).getTime(),
+
+            sensor: 'SOS',
+
+            value: 1,
+
+            threshold: 0,
+
+            severity: 'CRITICAL',
+
+            message:
+              'Emergency SOS button activated.',
+
+            acknowledged: false,
+          };
+
+          setAlerts([sosAlert]);
+        }
+
+      }
+
+
+      const historyData =
+        await getTelemetryHistory(30);
+
+
+      if (historyData.length > 0) {
+
+        const convertedHistory =
+          historyData.map(convertTelemetry);
+
+        setHistory(convertedHistory);
+      }
+
+    } catch (error) {
+
+      console.error(
+        'Failed to load SafeNode telemetry:',
+        error
+      );
+
+    }
+
+  };
+
+
+  // --------------------------------------------------
+  // POLL SUPABASE
+  // --------------------------------------------------
+
+  useEffect(() => {
+
+    loadTelemetry();
+
+    const interval =
+      setInterval(loadTelemetry, 5000);
+
+    return () =>
+      clearInterval(interval);
+
   }, []);
 
-  const handleVerifyHandshake = async (data?: { ssid: string; identity: string; eapMethod: any; macAddress: string }) => {
-    try {
-      const payload = data || {
-        ssid: handshake.ssid,
-        identity: handshake.identity,
-        eapMethod: handshake.eapMethod,
-        macAddress: handshake.macAddress,
-      };
-      const res = await fetch('/api/handshake/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const json = await res.json();
-      if (json.success) {
-        setHandshake(json.handshake);
-      }
-    } catch (err) {
-      console.error("Handshake verification error:", err);
-    }
+
+  // --------------------------------------------------
+  // HANDSHAKE
+  // --------------------------------------------------
+
+  const handleVerifyHandshake = async () => {
+
+    setHandshake({
+
+      ...handshake,
+
+      verified: true,
+
+      connectedAt: Date.now(),
+
+      handshakeLogs: [
+
+        ...handshake.handshakeLogs,
+
+        '[SYSTEM] SafeNode connection verified.',
+
+      ],
+
+    });
+
   };
+
 
   const handleDisconnect = async () => {
-    try {
-      const res = await fetch('/api/handshake/disconnect', { method: 'POST' });
-      const json = await res.json();
-      if (json.success) {
-        setHandshake(json.handshake);
-      }
-    } catch (err) {
-      console.error("Disconnect error:", err);
-    }
+
+    setHandshake({
+
+      ...handshake,
+
+      verified: false,
+
+      connectedAt: null,
+
+      handshakeLogs: [
+
+        ...handshake.handshakeLogs,
+
+        '[SYSTEM] SafeNode connection disconnected.',
+
+      ],
+
+    });
+
   };
 
-  const handleAcknowledgeAlert = async (alertId: string) => {
-    try {
-      const res = await fetch('/api/alerts/acknowledge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ alertId }),
-      });
-      const json = await res.json();
-      if (json.success) {
-        setAlerts(json.alerts);
-      }
-    } catch (err) {
-      console.error("Acknowledge alert error:", err);
-    }
-  };
 
-  const handleSaveConfig = async (newConfig: DeviceConfig) => {
-    try {
-      const res = await fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newConfig),
-      });
-      const json = await res.json();
-      if (json.success) {
-        setConfig(json.config);
-      }
-    } catch (err) {
-      console.error("Config save error:", err);
-    }
-  };
+  // --------------------------------------------------
+  // ALERT
+  // --------------------------------------------------
 
-  const activeAlertsCount = alerts.filter(a => !a.acknowledged).length;
+  const handleAcknowledgeAlert =
+    (alertId: string) => {
+
+      setAlerts(previousAlerts =>
+
+        previousAlerts.map(alert =>
+
+          alert.id === alertId
+
+            ? {
+                ...alert,
+                acknowledged: true,
+              }
+
+            : alert
+
+        )
+
+      );
+
+    };
+
+
+  // --------------------------------------------------
+  // CONFIG
+  // --------------------------------------------------
+
+  const handleSaveConfig =
+    (newConfig: DeviceConfig) => {
+
+      setConfig(newConfig);
+
+    };
+
+
+  // --------------------------------------------------
+  // ACTIVE ALERT COUNT
+  // --------------------------------------------------
+
+  const activeAlertsCount =
+    alerts.filter(
+      alert => !alert.acknowledged
+    ).length;
+
+
+  // --------------------------------------------------
+  // DASHBOARD
+  // --------------------------------------------------
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans antialiased">
+
+    <div className="
+      min-h-screen
+      bg-zinc-950
+      text-zinc-100
+      flex
+      flex-col
+      font-sans
+      antialiased
+    ">
+
       <Header
+
         handshake={handshake}
+
         config={config}
-        activeAlertsCount={activeAlertsCount}
-        onOpenHandshake={() => setIsHandshakeOpen(true)}
-        onDisconnect={handleDisconnect}
-        onOpenConfig={() => setIsConfigOpen(true)}
-        onToggleNotifications={() => setNotificationsEnabled(!notificationsEnabled)}
-        notificationsEnabled={notificationsEnabled}
+
+        activeAlertsCount={
+          activeAlertsCount
+        }
+
+        onOpenHandshake={() =>
+          setIsHandshakeOpen(true)
+        }
+
+        onDisconnect={
+          handleDisconnect
+        }
+
+        onOpenConfig={() =>
+          setIsConfigOpen(true)
+        }
+
+        onToggleNotifications={() =>
+          setNotificationsEnabled(
+            !notificationsEnabled
+          )
+        }
+
+        notificationsEnabled={
+          notificationsEnabled
+        }
+
         activeView={activeView}
+
         onViewChange={setActiveView}
+
       />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
+
+      <main className="
+        flex-1
+        max-w-7xl
+        w-full
+        mx-auto
+        p-6
+        space-y-6
+      ">
+
+
         {activeView === 'arduino' ? (
+
           <ArduinoIde
+
             handshake={handshake}
-            onVerifyHandshake={() => handleVerifyHandshake()}
+
+            onVerifyHandshake={
+              handleVerifyHandshake
+            }
+
           />
+
         ) : (
+
           <>
-            {/* Top Overview Cards (Heart Rate, SpO2, Temp, Gas) */}
+
+            {/* OVERVIEW */}
+
             <OverviewCards
+
               telemetry={telemetry}
-              isVerified={handshake.verified}
+
+              isVerified={
+                handshake.verified
+              }
+
               config={config}
-              onOpenHandshake={() => setIsHandshakeOpen(true)}
+
+              onOpenHandshake={() =>
+                setIsHandshakeOpen(true)
+              }
+
             />
 
-            {/* Real-time Charts & Satellite GPS Grid */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="lg:col-span-2">
-                <RealtimeCharts history={history} isVerified={handshake.verified} />
+
+            {/* CHART + GPS */}
+
+            <div className="
+              grid
+              grid-cols-1
+              lg:grid-cols-3
+              gap-6
+            ">
+
+              <div className="
+                lg:col-span-2
+              ">
+
+                <RealtimeCharts
+
+                  history={history}
+
+                  isVerified={
+                    handshake.verified
+                  }
+
+                />
+
               </div>
+
+
               <div>
-                <GpsTracker telemetry={telemetry} isVerified={handshake.verified} />
+
+                <GpsTracker
+
+                  telemetry={telemetry}
+
+                  isVerified={
+                    handshake.verified
+                  }
+
+                />
+
               </div>
+
             </div>
 
-            {/* Bottom Row: Serial Monitor & Threshold Alert Log */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <SerialMonitor handshake={handshake} />
-              <GasLogTable alerts={alerts} onAcknowledge={handleAcknowledgeAlert} />
+
+            {/* SERIAL + ALERTS */}
+
+            <div className="
+              grid
+              grid-cols-1
+              lg:grid-cols-2
+              gap-6
+            ">
+
+              <SerialMonitor
+
+                handshake={handshake}
+
+              />
+
+
+              <GasLogTable
+
+                alerts={alerts}
+
+                onAcknowledge={
+                  handleAcknowledgeAlert
+                }
+
+              />
+
             </div>
+
           </>
+
         )}
+
       </main>
 
-      {/* Modals */}
+
+      {/* HANDSHAKE MODAL */}
+
       <HandshakeModal
+
         isOpen={isHandshakeOpen}
-        onClose={() => setIsHandshakeOpen(false)}
+
+        onClose={() =>
+          setIsHandshakeOpen(false)
+        }
+
         handshake={handshake}
-        onVerify={handleVerifyHandshake}
+
+        onVerify={
+          handleVerifyHandshake
+        }
+
       />
 
+
+      {/* CONFIG MODAL */}
+
       <ConfigModal
+
         isOpen={isConfigOpen}
-        onClose={() => setIsConfigOpen(false)}
+
+        onClose={() =>
+          setIsConfigOpen(false)
+        }
+
         config={config}
-        onSave={handleSaveConfig}
+
+        onSave={
+          handleSaveConfig
+        }
+
       />
+
     </div>
+
   );
+
 }
